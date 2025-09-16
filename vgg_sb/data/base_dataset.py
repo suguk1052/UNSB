@@ -7,6 +7,36 @@ import numpy as np
 import torch.utils.data as data
 from PIL import Image
 import torchvision.transforms as transforms
+try:
+    from torchvision.transforms import InterpolationMode
+except ImportError:  # pragma: no cover - compatibility with older torchvision versions
+    InterpolationMode = None
+
+
+_PIL_INTERPOLATION_TO_MODE = {}
+if InterpolationMode is not None:
+    for pil_attr, mode in (
+        ("NEAREST", InterpolationMode.NEAREST),
+        ("BILINEAR", InterpolationMode.BILINEAR),
+        ("BICUBIC", InterpolationMode.BICUBIC),
+        ("BOX", InterpolationMode.BOX),
+        ("HAMMING", InterpolationMode.HAMMING),
+        ("LANCZOS", InterpolationMode.LANCZOS),
+    ):
+        pil_value = getattr(Image, pil_attr, None)
+        if pil_value is None:
+            continue
+        _PIL_INTERPOLATION_TO_MODE[pil_value] = mode
+        pil_value_value = getattr(pil_value, "value", None)
+        if pil_value_value is not None:
+            _PIL_INTERPOLATION_TO_MODE[pil_value_value] = mode
+
+    antialias = getattr(Image, "ANTIALIAS", None)
+    if antialias is not None:
+        _PIL_INTERPOLATION_TO_MODE[antialias] = InterpolationMode.LANCZOS
+        antialias_value = getattr(antialias, "value", None)
+        if antialias_value is not None:
+            _PIL_INTERPOLATION_TO_MODE[antialias_value] = InterpolationMode.LANCZOS
 from abc import ABC, abstractmethod
 
 
@@ -78,15 +108,44 @@ def get_params(opt, size):
     return {'crop_pos': (x, y), 'flip': flip}
 
 
+def _get_interpolation_mode(method):
+    """Return a torchvision InterpolationMode matching the given PIL method."""
+
+    if InterpolationMode is None:
+        return method
+
+    if isinstance(method, InterpolationMode):
+        return method
+
+    if method in _PIL_INTERPOLATION_TO_MODE:
+        return _PIL_INTERPOLATION_TO_MODE[method]
+
+    method_value = getattr(method, "value", None)
+    if method_value is not None:
+        if method_value in _PIL_INTERPOLATION_TO_MODE:
+            return _PIL_INTERPOLATION_TO_MODE[method_value]
+    try:
+        return InterpolationMode(method if method_value is None else method_value)
+    except (ValueError, TypeError):
+        return None
+
+
 def get_transform(opt, params=None, grayscale=False, method=Image.BICUBIC, convert=True, augment=False):
     transform_list = []
+    resize_interpolation = _get_interpolation_mode(method)
     if grayscale:
         transform_list.append(transforms.Grayscale(1))
     if 'fixsize' in opt.preprocess:
-        transform_list.append(transforms.Resize(params['size'], method))
+        resize_kwargs = {}
+        if resize_interpolation is not None:
+            resize_kwargs['interpolation'] = resize_interpolation
+        transform_list.append(transforms.Resize(params['size'], **resize_kwargs))
     if 'resize' in opt.preprocess:
         osize = [opt.load_size, opt.load_size]
-        transform_list.append(transforms.Resize(osize, method))
+        resize_kwargs = {}
+        if resize_interpolation is not None:
+            resize_kwargs['interpolation'] = resize_interpolation
+        transform_list.append(transforms.Resize(osize, **resize_kwargs))
     elif 'scale_width' in opt.preprocess:
         transform_list.append(transforms.Lambda(lambda img: __scale_width(img, opt.load_size, opt.crop_size, method)))
     elif 'scale_shortside' in opt.preprocess:
