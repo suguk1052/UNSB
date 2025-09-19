@@ -73,6 +73,14 @@ python train.py --dataroot ./datasets/cityscapes --name city_SB \
 --mode sb --lambda_SB 1.0 --lambda_NCE 1.0 --gpu_ids 0 --direction B2A
 ```
 
+To resize inputs to a specific resolution while preserving the original aspect ratio, use the new preprocessing mode:
+
+```
+--preprocess scale_width_and_height --img_width 512 --img_height 384
+```
+
+The image is scaled so that it fills the requested width and height and then center-cropped to the exact target size. When not specified, both `--img_width` and `--img_height` default to `256`.
+
 for summer2winter,
 
 ```

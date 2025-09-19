@@ -2,6 +2,7 @@
 
 It also includes common transformation functions (e.g., get_transform, __scale_width), which can be later used in subclasses.
 """
+import math
 import random
 import numpy as np
 import torch.utils.data as data
@@ -149,6 +150,14 @@ def get_transform(opt, params=None, grayscale=False, method=Image.BICUBIC, conve
         if resize_interpolation is not None:
             resize_kwargs["interpolation"] = resize_interpolation
         transform_list.append(transforms.Resize(osize, **resize_kwargs))
+    elif 'scale_width_and_height' in opt.preprocess:
+        transform_list.append(
+            transforms.Lambda(
+                lambda img: __scale_width_and_height(
+                    img, opt.img_width, opt.img_height, method
+                )
+            )
+        )
     elif 'scale_width' in opt.preprocess:
         transform_list.append(transforms.Lambda(lambda img: __scale_width(img, opt.load_size, opt.crop_size, method)))
     elif 'scale_shortside' in opt.preprocess:
@@ -246,6 +255,33 @@ def __scale_width(img, target_width, crop_width, method=Image.BICUBIC):
     w = target_width
     h = int(max(target_width * oh / ow, crop_width))
     return img.resize((w, h), method)
+
+
+def __scale_width_and_height(img, target_width, target_height, method=Image.BICUBIC):
+    ow, oh = img.size
+    if ow == 0 or oh == 0:
+        return img
+
+    scale = max(target_width / ow, target_height / oh)
+    new_w = int(math.ceil(ow * scale))
+    new_h = int(math.ceil(oh * scale))
+    if new_w != ow or new_h != oh:
+        img = img.resize((new_w, new_h), method)
+
+    if new_w == target_width and new_h == target_height:
+        return img
+
+    left = max(0, int(round((new_w - target_width) / 2.0)))
+    top = max(0, int(round((new_h - target_height) / 2.0)))
+    right = min(left + target_width, new_w)
+    bottom = min(top + target_height, new_h)
+
+    left = max(0, right - target_width)
+    top = max(0, bottom - target_height)
+    right = left + target_width
+    bottom = top + target_height
+
+    return img.crop((left, top, right, bottom))
 
 
 def __crop(img, pos, size):
