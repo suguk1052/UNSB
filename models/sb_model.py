@@ -144,8 +144,8 @@ class SBModel(BaseModel):
         self.loss_G.backward()
         self.optimizer_G.step()
         if self.opt.netF == 'mlp_sample':
-            self.optimizer_F.step()       
-        
+            self.optimizer_F.step()
+
     def set_input(self, input,input2=None):
 
         """Unpack input data from the dataloader and perform necessary pre-processing steps.
@@ -162,8 +162,14 @@ class SBModel(BaseModel):
         
         self.image_paths = input['A_paths' if AtoB else 'B_paths']
 
+    def _rgb_only(self, tensor):
+        channels = self.opt.output_nc
+        if tensor is None or tensor.size(1) <= channels:
+            return tensor
+        return tensor[:, :channels]
+
     def forward(self):
-        
+
         tau = self.opt.tau
         T = self.opt.num_timesteps
         incs = np.array([0] + [1/(i+1) for i in range(T-1)])
@@ -269,13 +275,13 @@ class SBModel(BaseModel):
         
         fake = self.fake_B.detach()
         std = torch.rand(size=[1]).item() * self.opt.std
-        
-        pred_fake = self.netD(fake,self.time_idx)
+
+        pred_fake = self.netD(self._rgb_only(fake),self.time_idx)
         self.loss_D_fake = self.criterionGAN(pred_fake, False).mean()
-        self.pred_real = self.netD(self.real_B,self.time_idx)
+        self.pred_real = self.netD(self._rgb_only(self.real_B),self.time_idx)
         loss_D_real = self.criterionGAN(self.pred_real, True)
         self.loss_D_real = loss_D_real.mean()
-        
+
         self.loss_D = (self.loss_D_fake + self.loss_D_real) * 0.5
         return self.loss_D
     def compute_E_loss(self):
@@ -297,9 +303,9 @@ class SBModel(BaseModel):
         """Calculate GAN and NCE loss for the generator"""
         fake = self.fake_B
         std = torch.rand(size=[1]).item() * self.opt.std
-        
+
         if self.opt.lambda_GAN > 0.0:
-            pred_fake = self.netD(fake,self.time_idx)
+            pred_fake = self.netD(self._rgb_only(fake),self.time_idx)
             self.loss_G_GAN = self.criterionGAN(pred_fake, True).mean() * self.opt.lambda_GAN
         else:
             self.loss_G_GAN = 0.0

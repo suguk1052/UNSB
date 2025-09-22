@@ -247,10 +247,11 @@ def define_G(input_nc, output_nc, ngf, netG, norm='batch', use_dropout=False, in
     net = None
     norm_layer = get_norm_layer(norm_type=norm)
 
-    if opt is not None and getattr(opt, 'use_mask', False):
-        net = MaskGuidedGenerator(input_nc, output_nc, ngf, netG, norm_layer=norm_layer, use_dropout=use_dropout,
+    if netG == 'mask_dual':
+        branch_name = getattr(opt, 'mask_dual_branch', 'resnet_9blocks_cond') if opt is not None else 'resnet_9blocks'
+        net = MaskGuidedGenerator(input_nc, output_nc, ngf, branch_name, norm_layer=norm_layer, use_dropout=use_dropout,
                                   no_antialias=no_antialias, no_antialias_up=no_antialias_up, opt=opt, config=config)
-        initialize_weights = ('stylegan2' not in netG)
+        initialize_weights = ('stylegan2' not in branch_name)
     else:
         if netG == 'resnet_9blocks':
             net = ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, no_antialias=no_antialias, no_antialias_up=no_antialias_up, n_blocks=9, opt=opt)
@@ -351,59 +352,59 @@ def define_D(input_nc, ndf, netD, n_layers_D=3, norm='batch', init_type='normal'
 ##############################################################################
 
 
-def _build_generator_branch(netG, input_nc, output_nc, ngf, norm_layer, use_dropout, no_antialias,
+def _build_generator_branch(branch_name, input_nc, output_nc, ngf, norm_layer, use_dropout, no_antialias,
                             no_antialias_up, opt=None, config=None):
     """Utility to instantiate a generator branch mirroring :func:`define_G`."""
-    if netG == 'resnet_9blocks':
+    if branch_name == 'resnet_9blocks':
         return ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout,
                                no_antialias=no_antialias, no_antialias_up=no_antialias_up, n_blocks=9, opt=opt)
-    if netG == 'resnet_6blocks':
+    if branch_name == 'resnet_6blocks':
         return ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout,
                                no_antialias=no_antialias, no_antialias_up=no_antialias_up, n_blocks=6, opt=opt)
-    if netG == 'resnet_4blocks':
+    if branch_name == 'resnet_4blocks':
         return ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout,
                                no_antialias=no_antialias, no_antialias_up=no_antialias_up, n_blocks=4, opt=opt)
-    if netG == 'unet_128':
+    if branch_name == 'unet_128':
         return UnetGenerator(input_nc, output_nc, 7, ngf, norm_layer=norm_layer, use_dropout=use_dropout)
-    if netG == 'unet_256':
+    if branch_name == 'unet_256':
         return UnetGenerator(input_nc, output_nc, 8, ngf, norm_layer=norm_layer, use_dropout=use_dropout)
-    if netG == 'stylegan2':
+    if branch_name == 'stylegan2':
         return StyleGAN2Generator(input_nc, output_nc, ngf, use_dropout=use_dropout, opt=opt)
-    if netG == 'smallstylegan2':
+    if branch_name == 'smallstylegan2':
         return StyleGAN2Generator(input_nc, output_nc, ngf, use_dropout=use_dropout, n_blocks=2, opt=opt)
-    if netG == 'resnet_cat':
+    if branch_name == 'resnet_cat':
         n_blocks = 8
         return G_Resnet(input_nc, output_nc, opt.nz, num_downs=2, n_res=n_blocks - 4, ngf=ngf, norm='inst', nl_layer='relu')
-    if netG == 'ncsnpp':
+    if branch_name == 'ncsnpp':
         return NCSNpp(config)
-    if netG == 'resnet_9blocks_cond':
+    if branch_name == 'resnet_9blocks_cond':
         return ResnetGenerator_ncsn(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout,
                                     no_antialias=no_antialias, no_antialias_up=no_antialias_up, n_blocks=9, opt=opt)
-    raise NotImplementedError('Generator branch model name [%s] is not recognized' % netG)
+    raise NotImplementedError('Generator branch model name [%s] is not recognized' % branch_name)
 
 
 class MaskGuidedGenerator(nn.Module):
     """Generator that separates foreground/background streams using a mask channel."""
 
-    def __init__(self, base_input_nc, output_nc, ngf, netG, norm_layer, use_dropout, no_antialias,
+    def __init__(self, base_input_nc, output_nc, ngf, branch_name, norm_layer, use_dropout, no_antialias,
                  no_antialias_up, opt=None, config=None):
         super().__init__()
         self.base_input_nc = base_input_nc
         self.mask_channels = 1
         branch_input_nc = base_input_nc + self.mask_channels
 
-        self.foreground_branch = _build_generator_branch(netG, branch_input_nc, output_nc, ngf, norm_layer,
+        self.foreground_branch = _build_generator_branch(branch_name, branch_input_nc, output_nc, ngf, norm_layer,
                                                          use_dropout, no_antialias, no_antialias_up, opt=opt,
                                                          config=config)
 
         # Background branch is encouraged to hallucinate textures, so enable dropout even when
         # the main generator runs deterministically.
         background_dropout = use_dropout if use_dropout else True
-        self.background_branch = _build_generator_branch(netG, branch_input_nc, output_nc, ngf, norm_layer,
+        self.background_branch = _build_generator_branch(branch_name, branch_input_nc, output_nc, ngf, norm_layer,
                                                          background_dropout, no_antialias, no_antialias_up, opt=opt,
                                                          config=config)
 
-    def forward(self, input):
+    def forward(self, input, *args, **kwargs):
         if input.size(1) >= self.base_input_nc + self.mask_channels:
             image = input[:, :self.base_input_nc]
             mask = input[:, self.base_input_nc:self.base_input_nc + self.mask_channels]
@@ -411,19 +412,57 @@ class MaskGuidedGenerator(nn.Module):
             image = input[:, :self.base_input_nc]
             mask = torch.ones_like(image[:, :1])
 
-        mask = mask.clamp(0.0, 1.0)
+        mask = mask.mul(0.5).add_(0.5).clamp_(0.0, 1.0)
+        mask = mask.type_as(image)
         fg = image * mask
         bg = image * (1.0 - mask)
 
         fg_condition = torch.cat([fg, mask], dim=1)
         bg_condition = torch.cat([bg, 1.0 - mask], dim=1)
 
-        fg_translated = self.foreground_branch(fg_condition)
-        fg_translated = torch.tanh(fg_translated + fg)
+        fg_out, fg_feats = self._run_branch(self.foreground_branch, fg_condition, args, kwargs)
+        bg_out, bg_feats = self._run_branch(self.background_branch, bg_condition, args, kwargs)
 
-        bg_translated = self.background_branch(bg_condition)
+        if (fg_feats is None) != (bg_feats is None):
+            raise RuntimeError('MaskGuidedGenerator expects foreground and background branches to return matching feature sets.')
 
-        return fg_translated * mask + bg_translated * (1.0 - mask)
+        if fg_out is None and bg_out is None:
+            mask_pyramid = self._build_mask_pyramid(mask, fg_feats)
+            return [f_feat * m + b_feat * (1.0 - m)
+                    for f_feat, b_feat, m in zip(fg_feats, bg_feats, mask_pyramid)]
+
+        fg_translated = torch.tanh(fg_out + fg)
+        bg_translated = bg_out
+
+        blended = fg_translated * mask + bg_translated * (1.0 - mask)
+
+        if fg_feats is None and bg_feats is None:
+            return blended
+
+        mask_pyramid = self._build_mask_pyramid(mask, fg_feats)
+        blended_feats = [f_feat * m + b_feat * (1.0 - m)
+                         for f_feat, b_feat, m in zip(fg_feats, bg_feats, mask_pyramid)]
+        return blended, blended_feats
+
+    def _run_branch(self, branch, conditioned_input, args, kwargs):
+        out = branch(conditioned_input, *args, **kwargs)
+        if isinstance(out, tuple):
+            return out
+        if isinstance(out, list):
+            return None, out
+        return out, None
+
+    def _build_mask_pyramid(self, mask, feature_list):
+        if feature_list is None:
+            return None
+        pyramids = []
+        for feat in feature_list:
+            if mask.shape[2:] == feat.shape[2:]:
+                resized = mask
+            else:
+                resized = F.interpolate(mask, size=feat.shape[2:], mode='bilinear', align_corners=False)
+            pyramids.append(resized)
+        return pyramids
 
 
 class GANLoss(nn.Module):
