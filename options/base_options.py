@@ -90,7 +90,10 @@ class BaseOptions():
         in model and dataset classes.
         """
         if not self.initialized:  # check if it has been initialized
-            parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+            parser = argparse.ArgumentParser(
+                formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+                allow_abbrev=False,
+            )
             parser = self.initialize(parser)
 
         # get the basic options
