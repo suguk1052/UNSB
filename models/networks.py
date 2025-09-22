@@ -247,30 +247,36 @@ def define_G(input_nc, output_nc, ngf, netG, norm='batch', use_dropout=False, in
     net = None
     norm_layer = get_norm_layer(norm_type=norm)
 
-    if netG == 'resnet_9blocks':
-        net = ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, no_antialias=no_antialias, no_antialias_up=no_antialias_up, n_blocks=9, opt=opt)
-    elif netG == 'resnet_6blocks':
-        net = ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, no_antialias=no_antialias, no_antialias_up=no_antialias_up, n_blocks=6, opt=opt)
-    elif netG == 'resnet_4blocks':
-        net = ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, no_antialias=no_antialias, no_antialias_up=no_antialias_up, n_blocks=4, opt=opt)
-    elif netG == 'unet_128':
-        net = UnetGenerator(input_nc, output_nc, 7, ngf, norm_layer=norm_layer, use_dropout=use_dropout)
-    elif netG == 'unet_256':
-        net = UnetGenerator(input_nc, output_nc, 8, ngf, norm_layer=norm_layer, use_dropout=use_dropout)
-    elif netG == 'stylegan2':
-        net = StyleGAN2Generator(input_nc, output_nc, ngf, use_dropout=use_dropout, opt=opt)
-    elif netG == 'smallstylegan2':
-        net = StyleGAN2Generator(input_nc, output_nc, ngf, use_dropout=use_dropout, n_blocks=2, opt=opt)
-    elif netG == 'resnet_cat':
-        n_blocks = 8
-        net = G_Resnet(input_nc, output_nc, opt.nz, num_downs=2, n_res=n_blocks - 4, ngf=ngf, norm='inst', nl_layer='relu')
-    elif netG == 'ncsnpp':
-        net = NCSNpp(config)
-    elif netG == 'resnet_9blocks_cond':
-        net = ResnetGenerator_ncsn(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, no_antialias=no_antialias, no_antialias_up=no_antialias_up, n_blocks=9, opt=opt)
+    if opt is not None and getattr(opt, 'use_mask', False):
+        net = MaskGuidedGenerator(input_nc, output_nc, ngf, netG, norm_layer=norm_layer, use_dropout=use_dropout,
+                                  no_antialias=no_antialias, no_antialias_up=no_antialias_up, opt=opt, config=config)
+        initialize_weights = ('stylegan2' not in netG)
     else:
-        raise NotImplementedError('Generator model name [%s] is not recognized' % netG)
-    return init_net(net, init_type, init_gain, gpu_ids, initialize_weights=('stylegan2' not in netG))
+        if netG == 'resnet_9blocks':
+            net = ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, no_antialias=no_antialias, no_antialias_up=no_antialias_up, n_blocks=9, opt=opt)
+        elif netG == 'resnet_6blocks':
+            net = ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, no_antialias=no_antialias, no_antialias_up=no_antialias_up, n_blocks=6, opt=opt)
+        elif netG == 'resnet_4blocks':
+            net = ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, no_antialias=no_antialias, no_antialias_up=no_antialias_up, n_blocks=4, opt=opt)
+        elif netG == 'unet_128':
+            net = UnetGenerator(input_nc, output_nc, 7, ngf, norm_layer=norm_layer, use_dropout=use_dropout)
+        elif netG == 'unet_256':
+            net = UnetGenerator(input_nc, output_nc, 8, ngf, norm_layer=norm_layer, use_dropout=use_dropout)
+        elif netG == 'stylegan2':
+            net = StyleGAN2Generator(input_nc, output_nc, ngf, use_dropout=use_dropout, opt=opt)
+        elif netG == 'smallstylegan2':
+            net = StyleGAN2Generator(input_nc, output_nc, ngf, use_dropout=use_dropout, n_blocks=2, opt=opt)
+        elif netG == 'resnet_cat':
+            n_blocks = 8
+            net = G_Resnet(input_nc, output_nc, opt.nz, num_downs=2, n_res=n_blocks - 4, ngf=ngf, norm='inst', nl_layer='relu')
+        elif netG == 'ncsnpp':
+            net = NCSNpp(config)
+        elif netG == 'resnet_9blocks_cond':
+            net = ResnetGenerator_ncsn(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, no_antialias=no_antialias, no_antialias_up=no_antialias_up, n_blocks=9, opt=opt)
+        else:
+            raise NotImplementedError('Generator model name [%s] is not recognized' % netG)
+        initialize_weights = ('stylegan2' not in netG)
+    return init_net(net, init_type, init_gain, gpu_ids, initialize_weights=initialize_weights)
 
 
 def define_F(input_nc, netF, norm='batch', use_dropout=False, init_type='normal', init_gain=0.02, no_antialias=False, gpu_ids=[], opt=None):
@@ -343,6 +349,83 @@ def define_D(input_nc, ndf, netD, n_layers_D=3, norm='batch', init_type='normal'
 ##############################################################################
 # Classes
 ##############################################################################
+
+
+def _build_generator_branch(netG, input_nc, output_nc, ngf, norm_layer, use_dropout, no_antialias,
+                            no_antialias_up, opt=None, config=None):
+    """Utility to instantiate a generator branch mirroring :func:`define_G`."""
+    if netG == 'resnet_9blocks':
+        return ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout,
+                               no_antialias=no_antialias, no_antialias_up=no_antialias_up, n_blocks=9, opt=opt)
+    if netG == 'resnet_6blocks':
+        return ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout,
+                               no_antialias=no_antialias, no_antialias_up=no_antialias_up, n_blocks=6, opt=opt)
+    if netG == 'resnet_4blocks':
+        return ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout,
+                               no_antialias=no_antialias, no_antialias_up=no_antialias_up, n_blocks=4, opt=opt)
+    if netG == 'unet_128':
+        return UnetGenerator(input_nc, output_nc, 7, ngf, norm_layer=norm_layer, use_dropout=use_dropout)
+    if netG == 'unet_256':
+        return UnetGenerator(input_nc, output_nc, 8, ngf, norm_layer=norm_layer, use_dropout=use_dropout)
+    if netG == 'stylegan2':
+        return StyleGAN2Generator(input_nc, output_nc, ngf, use_dropout=use_dropout, opt=opt)
+    if netG == 'smallstylegan2':
+        return StyleGAN2Generator(input_nc, output_nc, ngf, use_dropout=use_dropout, n_blocks=2, opt=opt)
+    if netG == 'resnet_cat':
+        n_blocks = 8
+        return G_Resnet(input_nc, output_nc, opt.nz, num_downs=2, n_res=n_blocks - 4, ngf=ngf, norm='inst', nl_layer='relu')
+    if netG == 'ncsnpp':
+        return NCSNpp(config)
+    if netG == 'resnet_9blocks_cond':
+        return ResnetGenerator_ncsn(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout,
+                                    no_antialias=no_antialias, no_antialias_up=no_antialias_up, n_blocks=9, opt=opt)
+    raise NotImplementedError('Generator branch model name [%s] is not recognized' % netG)
+
+
+class MaskGuidedGenerator(nn.Module):
+    """Generator that separates foreground/background streams using a mask channel."""
+
+    def __init__(self, base_input_nc, output_nc, ngf, netG, norm_layer, use_dropout, no_antialias,
+                 no_antialias_up, opt=None, config=None):
+        super().__init__()
+        self.base_input_nc = base_input_nc
+        self.mask_channels = 1
+        branch_input_nc = base_input_nc + self.mask_channels
+
+        self.foreground_branch = _build_generator_branch(netG, branch_input_nc, output_nc, ngf, norm_layer,
+                                                         use_dropout, no_antialias, no_antialias_up, opt=opt,
+                                                         config=config)
+
+        # Background branch is encouraged to hallucinate textures, so enable dropout even when
+        # the main generator runs deterministically.
+        background_dropout = use_dropout if use_dropout else True
+        self.background_branch = _build_generator_branch(netG, branch_input_nc, output_nc, ngf, norm_layer,
+                                                         background_dropout, no_antialias, no_antialias_up, opt=opt,
+                                                         config=config)
+
+    def forward(self, input):
+        if input.size(1) >= self.base_input_nc + self.mask_channels:
+            image = input[:, :self.base_input_nc]
+            mask = input[:, self.base_input_nc:self.base_input_nc + self.mask_channels]
+        else:
+            image = input[:, :self.base_input_nc]
+            mask = torch.ones_like(image[:, :1])
+
+        mask = mask.clamp(0.0, 1.0)
+        fg = image * mask
+        bg = image * (1.0 - mask)
+
+        fg_condition = torch.cat([fg, mask], dim=1)
+        bg_condition = torch.cat([bg, 1.0 - mask], dim=1)
+
+        fg_translated = self.foreground_branch(fg_condition)
+        fg_translated = torch.tanh(fg_translated + fg)
+
+        bg_translated = self.background_branch(bg_condition)
+
+        return fg_translated * mask + bg_translated * (1.0 - mask)
+
+
 class GANLoss(nn.Module):
     """Define different GAN objectives.
 

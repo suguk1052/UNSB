@@ -43,6 +43,9 @@ class BaseOptions():
         parser.add_argument('--n_layers_D', type=int, default=3, help='only used if netD==n_layers')
         parser.add_argument('--style_dim', type=int, default=512, help='only used if netD==n_layers')
         parser.add_argument('--n_mlp', type=int, default=3, help='only used if netD==n_layers')
+        parser.add_argument('--use_mask', action='store_true',
+                            help='if specified, load paired foreground/background masks and use a dual-branch generator that ' \
+                                 'preserves masked structure while re-synthesising background textures')
         parser.add_argument('--normG', type=str, default='instance', choices=['instance', 'batch', 'none'], help='instance normalization or batch normalization for G')
         parser.add_argument('--normD', type=str, default='instance', choices=['instance', 'batch', 'none'], help='instance normalization or batch normalization for D')
         parser.add_argument('--init_type', type=str, default='xavier', choices=['normal', 'xavier', 'kaiming', 'orthogonal'], help='network initialization')

@@ -58,7 +58,7 @@ bash ./datasets/download_cut_dataset.sh horse2zebra
 Due to copyright issue, we do not directly provide cityscapes dataset. 
 please refer to the original repository of [CUT](https://github.com/taesungp/contrastive-unpaired-translation).
 
-## Training 
+## Training
 Refer the ```./run_train.sh``` file or
 
 ```
@@ -66,7 +66,13 @@ python train.py --dataroot ./datasets/horse2zebra --name h2z_SB \
 --mode sb --lambda_SB 1.0 --lambda_NCE 1.0 --gpu_ids 0
 ```
 
-for cityscapes and map2sat, 
+To enable foreground/background-aware translation, prepare matching mask folders next to the RGB data. For each of the original
+`trainA`, `trainB`, `testA`, and `testB` directories, add a counterpart with the `_mask` suffix (for example, `trainA_mask`).
+Every mask folder should contain grayscale images that share the exact filenames with their RGB partners. When launching
+training or evaluation, add `--use_mask` to consume the mask folders automatically and feed a 4-channel (RGB+mask) tensor into
+the mask-guided generator.
+
+for cityscapes and map2sat,
 
 ```
 python train.py --dataroot ./datasets/cityscapes --name city_SB \
