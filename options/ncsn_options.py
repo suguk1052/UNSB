@@ -73,5 +73,5 @@ def NCSNOptions():
     parser.add_argument('--std', type=float, default=0.25, help='Scale of Gaussian noise added to data')
 
     args, unknown = parser.parse_known_args()
-    args.ch_mult = [1, 2 ,4]
-return args
+    args.ch_mult = [1, 2, 4]
+    return args
