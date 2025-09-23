@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+from collections import OrderedDict
 from .base_model import BaseModel
 from . import networks
 from .patchnce import PatchNCELoss
@@ -400,9 +401,25 @@ class SBModel(BaseModel):
             loss_NCE_both = (self.loss_NCE + self.loss_NCE_Y) * 0.5
         else:
             loss_NCE_both = self.loss_NCE
-        
+            self.loss_NCE_Y = 0.0
+
         self.loss_G = self.loss_G_GAN + self.opt.lambda_SB*self.loss_SB + self.opt.lambda_NCE*loss_NCE_both
         return self.loss_G
+
+    def get_current_visuals(self):
+        visuals = super().get_current_visuals()
+        cleaned = OrderedDict()
+        base_channels = self.opt.output_nc
+
+        for name, tensor in visuals.items():
+            if isinstance(tensor, torch.Tensor) and tensor.dim() == 4 and tensor.size(1) > base_channels:
+                cleaned[name] = tensor[:, :base_channels]
+                mask = tensor[:, base_channels:base_channels + 1]
+                cleaned[f"{name}_mask"] = mask
+            else:
+                cleaned[name] = tensor
+
+        return cleaned
 
 
     def calculate_NCE_loss(self, src, tgt):
