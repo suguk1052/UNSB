@@ -55,8 +55,22 @@ Download the dataset with following script e.g.
 bash ./datasets/download_cut_dataset.sh horse2zebra
 ```
 
-Due to copyright issue, we do not directly provide cityscapes dataset. 
+Due to copyright issue, we do not directly provide cityscapes dataset.
 please refer to the original repository of [CUT](https://github.com/taesungp/contrastive-unpaired-translation).
+
+### Preprocessing with gray padding and rotation
+To align custom datasets with the expected aspect ratio, use the helper script that pads images with neutral gray and applies a small random rotation before resizing:
+
+```
+python datasets/preprocess_with_rotation.py \
+  --input_dir path/to/raw_images \
+  --output_dir path/to/processed_images \
+  --output_width 512 \
+  --output_height 1024 \
+  --seed 42
+```
+
+Each image is padded with RGB `(128, 128, 128)` to preserve its original aspect ratio, randomly rotated within ±10°, and finally letterboxed to the requested resolution. The seed argument is optional but can be used for reproducible rotations.
 
 ## Training 
 Refer the ```./run_train.sh``` file or

@@ -58,7 +58,7 @@ def process_image(path: Path, output_path: Path, output_width: int, output_heigh
     target_ratio = output_width / output_height
     padded = pad_to_aspect_ratio(image, target_ratio)
 
-    angle = random.uniform(-15.0, 15.0)
+    angle = random.uniform(-10.0, 10.0)
     rotated = padded.rotate(angle, resample=Image.BICUBIC, expand=True, fillcolor=GRAY)
 
     final_image = resize_with_letterbox(rotated, output_width, output_height)
