@@ -58,7 +58,7 @@ bash ./datasets/download_cut_dataset.sh horse2zebra
 Due to copyright issue, we do not directly provide cityscapes dataset. 
 please refer to the original repository of [CUT](https://github.com/taesungp/contrastive-unpaired-translation).
 
-## Training 
+## Training
 Refer the ```./run_train.sh``` file or
 
 ```
@@ -66,7 +66,20 @@ python train.py --dataroot ./datasets/horse2zebra --name h2z_SB \
 --mode sb --lambda_SB 1.0 --lambda_NCE 1.0 --gpu_ids 0
 ```
 
-for cityscapes and map2sat, 
+To enable foreground/background-aware translation, prepare matching mask folders next to the RGB data. For each of the original
+`trainA`, `trainB`, `testA`, and `testB` directories, add a counterpart with the `_mask` suffix (for example, `trainA_mask`).
+Every mask folder should contain grayscale images that share the exact filenames with their RGB partners. Masks should be
+binary with black (`0`) background and white (`255`) foreground; after normalization they are interpreted as 0 for background and
+1 for foreground.
+
+When launching training or evaluation, add `--use_mask` to consume the mask folders automatically. Unless you override
+`--netG`, the option switches the generator to `--netG mask_dual`, our mask-guided dual-branch translator. You can control the
+underlying branch architecture via `--mask_dual_branch` (defaults to `resnet_9blocks_cond`). If you prefer experimenting with a
+single-branch 4-channel generator instead, specify another `--netG` explicitly (and set `--input_nc 4` if required by the chosen
+architecture). Regardless of the generator, discriminators continue to operate on RGB only so that they judge full-image
+consistency across mask boundaries.
+
+for cityscapes and map2sat,
 
 ```
 python train.py --dataroot ./datasets/cityscapes --name city_SB \

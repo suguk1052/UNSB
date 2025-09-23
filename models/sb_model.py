@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+from collections import OrderedDict
 from .base_model import BaseModel
 from . import networks
 from .patchnce import PatchNCELoss
@@ -144,8 +145,8 @@ class SBModel(BaseModel):
         self.loss_G.backward()
         self.optimizer_G.step()
         if self.opt.netF == 'mlp_sample':
-            self.optimizer_F.step()       
-        
+            self.optimizer_F.step()
+
     def set_input(self, input,input2=None):
 
         """Unpack input data from the dataloader and perform necessary pre-processing steps.
@@ -162,8 +163,14 @@ class SBModel(BaseModel):
         
         self.image_paths = input['A_paths' if AtoB else 'B_paths']
 
+    def _rgb_only(self, tensor):
+        channels = self.opt.output_nc
+        if tensor is None or tensor.size(1) <= channels:
+            return tensor
+        return tensor[:, :channels]
+
     def forward(self):
-        
+
         tau = self.opt.tau
         T = self.opt.num_timesteps
         incs = np.array([0] + [1/(i+1) for i in range(T-1)])
@@ -178,38 +185,88 @@ class SBModel(BaseModel):
         self.time_idx = time_idx
         self.timestep     = times[time_idx]
         
+        base_channels = self.opt.output_nc
+
+        def split_rgb_mask(tensor):
+            if tensor is None:
+                return None, None
+            if tensor.size(1) <= base_channels:
+                return tensor, None
+            return tensor[:, :base_channels], tensor[:, base_channels:]
+
         with torch.no_grad():
             self.netG.eval()
+
+            real_A_rgb, real_A_mask = split_rgb_mask(self.real_A)
+            real_A2_rgb = real_A_mask2 = None
+            if hasattr(self, 'real_A2'):
+                real_A2_rgb, real_A_mask2 = split_rgb_mask(self.real_A2)
+            real_B_rgb = real_B_mask = None
+            if self.opt.nce_idt:
+                real_B_rgb, real_B_mask = split_rgb_mask(self.real_B)
+
+            Xt_rgb_prev = Xt_1_rgb_prev = None
+            Xt2_rgb_prev = Xt_12_rgb_prev = None
+            XtB_rgb_prev = Xt_1B_rgb_prev = None
+
             for t in range(self.time_idx.int().item()+1):
-                
+
                 if t > 0:
                     delta = times[t] - times[t-1]
                     denom = times[-1] - times[t-1]
                     inter = (delta / denom).reshape(-1,1,1,1)
                     scale = (delta * (1 - delta / denom)).reshape(-1,1,1,1)
-                Xt       = self.real_A if (t == 0) else (1-inter) * Xt + inter * Xt_1.detach() + (scale * tau).sqrt() * torch.randn_like(Xt).to(self.real_A.device)
+
+                if t == 0:
+                    Xt_rgb = real_A_rgb
+                else:
+                    noise = torch.randn_like(Xt_rgb_prev).to(self.real_A.device)
+                    Xt_rgb = (1-inter) * Xt_rgb_prev + inter * Xt_1_rgb_prev.detach() + (scale * tau).sqrt() * noise
+
+                Xt_input = Xt_rgb if real_A_mask is None else torch.cat([Xt_rgb, real_A_mask], dim=1)
                 time_idx = (t * torch.ones(size=[self.real_A.shape[0]]).to(self.real_A.device)).long()
-                time     = times[time_idx]
-                z        = torch.randn(size=[self.real_A.shape[0],4*self.opt.ngf]).to(self.real_A.device)
-                Xt_1     = self.netG(Xt, time_idx, z)
-                
-                Xt2       = self.real_A2 if (t == 0) else (1-inter) * Xt2 + inter * Xt_12.detach() + (scale * tau).sqrt() * torch.randn_like(Xt2).to(self.real_A.device)
-                time_idx = (t * torch.ones(size=[self.real_A.shape[0]]).to(self.real_A.device)).long()
-                time     = times[time_idx]
-                z        = torch.randn(size=[self.real_A.shape[0],4*self.opt.ngf]).to(self.real_A.device)
-                Xt_12    = self.netG(Xt2, time_idx, z)
-                
-                
-                if self.opt.nce_idt:
-                    XtB = self.real_B if (t == 0) else (1-inter) * XtB + inter * Xt_1B.detach() + (scale * tau).sqrt() * torch.randn_like(XtB).to(self.real_A.device)
-                    time_idx = (t * torch.ones(size=[self.real_A.shape[0]]).to(self.real_A.device)).long()
-                    time     = times[time_idx]
-                    z        = torch.randn(size=[self.real_A.shape[0],4*self.opt.ngf]).to(self.real_A.device)
-                    Xt_1B = self.netG(XtB, time_idx, z)
-            if self.opt.nce_idt:
-                self.XtB = XtB.detach()
-            self.real_A_noisy = Xt.detach()
-            self.real_A_noisy2 = Xt2.detach()
+                z = torch.randn(size=[self.real_A.shape[0],4*self.opt.ngf]).to(self.real_A.device)
+                Xt_1_rgb = self.netG(Xt_input, time_idx, z)
+
+                if real_A2_rgb is not None:
+                    if t == 0:
+                        Xt2_rgb = real_A2_rgb
+                    else:
+                        noise2 = torch.randn_like(Xt2_rgb_prev).to(self.real_A.device)
+                        Xt2_rgb = (1-inter) * Xt2_rgb_prev + inter * Xt_12_rgb_prev.detach() + (scale * tau).sqrt() * noise2
+                    Xt2_input = Xt2_rgb if real_A_mask2 is None else torch.cat([Xt2_rgb, real_A_mask2], dim=1)
+                    z2 = torch.randn(size=[self.real_A.shape[0],4*self.opt.ngf]).to(self.real_A.device)
+                    Xt_12_rgb = self.netG(Xt2_input, time_idx, z2)
+
+                if self.opt.nce_idt and real_B_rgb is not None:
+                    if t == 0:
+                        XtB_rgb = real_B_rgb
+                    else:
+                        noiseB = torch.randn_like(XtB_rgb_prev).to(self.real_A.device)
+                        XtB_rgb = (1-inter) * XtB_rgb_prev + inter * Xt_1B_rgb_prev.detach() + (scale * tau).sqrt() * noiseB
+                    XtB_input = XtB_rgb if real_B_mask is None else torch.cat([XtB_rgb, real_B_mask], dim=1)
+                    zB = torch.randn(size=[self.real_A.shape[0],4*self.opt.ngf]).to(self.real_A.device)
+                    Xt_1B_rgb = self.netG(XtB_input, time_idx, zB)
+
+                Xt_rgb_prev = Xt_rgb
+                Xt_1_rgb_prev = Xt_1_rgb
+                if real_A2_rgb is not None:
+                    Xt2_rgb_prev = Xt2_rgb
+                    Xt_12_rgb_prev = Xt_12_rgb
+                if self.opt.nce_idt and real_B_rgb is not None:
+                    XtB_rgb_prev = XtB_rgb
+                    Xt_1B_rgb_prev = Xt_1B_rgb
+
+            if self.opt.nce_idt and real_B_rgb is not None:
+                XtB_final = XtB_rgb_prev.detach()
+                self.XtB = XtB_final if real_B_mask is None else torch.cat([XtB_final, real_B_mask], dim=1)
+            Xt_final = Xt_rgb_prev.detach()
+            self.real_A_noisy = Xt_final if real_A_mask is None else torch.cat([Xt_final, real_A_mask], dim=1)
+            if real_A2_rgb is not None:
+                Xt2_final = Xt2_rgb_prev.detach()
+                self.real_A_noisy2 = Xt2_final if real_A_mask2 is None else torch.cat([Xt2_final, real_A_mask2], dim=1)
+            else:
+                self.real_A_noisy2 = self.real_A_noisy
                       
         
         z_in    = torch.randn(size=[2*bs,4*self.opt.ngf]).to(self.real_A.device)
@@ -248,20 +305,31 @@ class SBModel(BaseModel):
             visuals = []
             with torch.no_grad():
                 self.netG.eval()
+                real_A_rgb, real_A_mask = split_rgb_mask(self.real_A)
+                Xt_rgb_prev = Xt_1_rgb_prev = None
                 for t in range(self.opt.num_timesteps):
-                    
+
                     if t > 0:
                         delta = times[t] - times[t-1]
                         denom = times[-1] - times[t-1]
                         inter = (delta / denom).reshape(-1,1,1,1)
                         scale = (delta * (1 - delta / denom)).reshape(-1,1,1,1)
-                    Xt       = self.real_A if (t == 0) else (1-inter) * Xt + inter * Xt_1.detach() + (scale * tau).sqrt() * torch.randn_like(Xt).to(self.real_A.device)
+
+                    if t == 0:
+                        Xt_rgb = real_A_rgb
+                    else:
+                        noise = torch.randn_like(Xt_rgb_prev).to(self.real_A.device)
+                        Xt_rgb = (1-inter) * Xt_rgb_prev + inter * Xt_1_rgb_prev.detach() + (scale * tau).sqrt() * noise
+
+                    Xt_input = Xt_rgb if real_A_mask is None else torch.cat([Xt_rgb, real_A_mask], dim=1)
                     time_idx = (t * torch.ones(size=[self.real_A.shape[0]]).to(self.real_A.device)).long()
-                    time     = times[time_idx]
                     z        = torch.randn(size=[self.real_A.shape[0],4*self.opt.ngf]).to(self.real_A.device)
-                    Xt_1     = self.netG(Xt, time_idx, z)
-                    
-                    setattr(self, "fake_"+str(t+1), Xt_1)
+                    Xt_1_rgb     = self.netG(Xt_input, time_idx, z)
+
+                    setattr(self, "fake_"+str(t+1), Xt_1_rgb)
+
+                    Xt_rgb_prev = Xt_rgb
+                    Xt_1_rgb_prev = Xt_1_rgb
                     
     def compute_D_loss(self):
         """Calculate GAN loss for the discriminator"""
@@ -269,13 +337,13 @@ class SBModel(BaseModel):
         
         fake = self.fake_B.detach()
         std = torch.rand(size=[1]).item() * self.opt.std
-        
-        pred_fake = self.netD(fake,self.time_idx)
+
+        pred_fake = self.netD(self._rgb_only(fake),self.time_idx)
         self.loss_D_fake = self.criterionGAN(pred_fake, False).mean()
-        self.pred_real = self.netD(self.real_B,self.time_idx)
+        self.pred_real = self.netD(self._rgb_only(self.real_B),self.time_idx)
         loss_D_real = self.criterionGAN(self.pred_real, True)
         self.loss_D_real = loss_D_real.mean()
-        
+
         self.loss_D = (self.loss_D_fake + self.loss_D_real) * 0.5
         return self.loss_D
     def compute_E_loss(self):
@@ -284,8 +352,13 @@ class SBModel(BaseModel):
         
         """Calculate GAN loss for the discriminator"""
         
-        XtXt_1 = torch.cat([self.real_A_noisy,self.fake_B.detach()], dim=1)
-        XtXt_2 = torch.cat([self.real_A_noisy2,self.fake_B2.detach()], dim=1)
+        real_noisy_rgb = self._rgb_only(self.real_A_noisy)
+        real_noisy2_rgb = self._rgb_only(self.real_A_noisy2)
+        fake_rgb = self._rgb_only(self.fake_B.detach())
+        fake2_rgb = self._rgb_only(self.fake_B2.detach())
+
+        XtXt_1 = torch.cat([real_noisy_rgb, fake_rgb], dim=1)
+        XtXt_2 = torch.cat([real_noisy2_rgb, fake2_rgb], dim=1)
         temp = torch.logsumexp(self.netE(XtXt_1, self.time_idx, XtXt_2).reshape(-1), dim=0).mean()
         self.loss_E = -self.netE(XtXt_1, self.time_idx, XtXt_1).mean() +temp + temp**2
         
@@ -297,22 +370,27 @@ class SBModel(BaseModel):
         """Calculate GAN and NCE loss for the generator"""
         fake = self.fake_B
         std = torch.rand(size=[1]).item() * self.opt.std
-        
+
         if self.opt.lambda_GAN > 0.0:
-            pred_fake = self.netD(fake,self.time_idx)
+            pred_fake = self.netD(self._rgb_only(fake),self.time_idx)
             self.loss_G_GAN = self.criterionGAN(pred_fake, True).mean() * self.opt.lambda_GAN
         else:
             self.loss_G_GAN = 0.0
         self.loss_SB = 0
         if self.opt.lambda_SB > 0.0:
-            XtXt_1 = torch.cat([self.real_A_noisy, self.fake_B], dim=1)
-            XtXt_2 = torch.cat([self.real_A_noisy2, self.fake_B2], dim=1)
+            real_noisy_rgb = self._rgb_only(self.real_A_noisy)
+            real_noisy2_rgb = self._rgb_only(self.real_A_noisy2)
+            fake_rgb = self._rgb_only(self.fake_B)
+            fake2_rgb = self._rgb_only(self.fake_B2)
+
+            XtXt_1 = torch.cat([real_noisy_rgb, fake_rgb], dim=1)
+            XtXt_2 = torch.cat([real_noisy2_rgb, fake2_rgb], dim=1)
             
             bs = self.opt.batch_size
 
             ET_XY    = self.netE(XtXt_1, self.time_idx, XtXt_1).mean() - torch.logsumexp(self.netE(XtXt_1, self.time_idx, XtXt_2).reshape(-1), dim=0)
             self.loss_SB = -(self.opt.num_timesteps-self.time_idx[0])/self.opt.num_timesteps*self.opt.tau*ET_XY
-            self.loss_SB += self.opt.tau*torch.mean((self.real_A_noisy-self.fake_B)**2)
+            self.loss_SB += self.opt.tau*torch.mean((real_noisy_rgb - fake_rgb) ** 2)
         if self.opt.lambda_NCE > 0.0:
             self.loss_NCE = self.calculate_NCE_loss(self.real_A, fake)
         else:
@@ -323,9 +401,25 @@ class SBModel(BaseModel):
             loss_NCE_both = (self.loss_NCE + self.loss_NCE_Y) * 0.5
         else:
             loss_NCE_both = self.loss_NCE
-        
+            self.loss_NCE_Y = 0.0
+
         self.loss_G = self.loss_G_GAN + self.opt.lambda_SB*self.loss_SB + self.opt.lambda_NCE*loss_NCE_both
         return self.loss_G
+
+    def get_current_visuals(self):
+        visuals = super().get_current_visuals()
+        cleaned = OrderedDict()
+        base_channels = self.opt.output_nc
+
+        for name, tensor in visuals.items():
+            if isinstance(tensor, torch.Tensor) and tensor.dim() == 4 and tensor.size(1) > base_channels:
+                cleaned[name] = tensor[:, :base_channels]
+                mask = tensor[:, base_channels:base_channels + 1]
+                cleaned[f"{name}_mask"] = mask
+            else:
+                cleaned[name] = tensor
+
+        return cleaned
 
 
     def calculate_NCE_loss(self, src, tgt):

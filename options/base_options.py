@@ -1,5 +1,6 @@
 import argparse
 import os
+import sys
 from util import util
 import torch
 import models
@@ -38,11 +39,21 @@ class BaseOptions():
         parser.add_argument('--embedding_dim', type=int, default=512, help='# of output image channels: 3 for RGB and 1 for grayscale')
         parser.add_argument('--netD', type=str, default='basic_cond', choices=['basic', 'n_layers', 'pixel', 'patch', 'tilestylegan2', 'stylegan2'], help='specify discriminator architecture. The basic model is a 70x70 PatchGAN. n_layers allows you to specify the layers in the discriminator')
         parser.add_argument('--netE', type=str, default='basic_cond', choices=['basic', 'n_layers', 'pixel', 'patch', 'tilestylegan2', 'stylegan2', 'patchstylegan2'], help='specify discriminator architecture. The basic model is a 70x70 PatchGAN. n_layers allows you to specify the layers in the discriminator')
-        parser.add_argument('--netG', type=str, default='resnet_9blocks_cond', choices=['resnet_9blocks', 'resnet_6blocks', 'unet_256', 'unet_128', 'stylegan2', 'smallstylegan2', 'resnet_cat'], help='specify generator architecture')
+        parser.add_argument('--netG', type=str, default='resnet_9blocks_cond',
+                            choices=['resnet_9blocks', 'resnet_9blocks_cond', 'resnet_6blocks', 'unet_256', 'unet_128',
+                                     'stylegan2', 'smallstylegan2', 'resnet_cat', 'mask_dual'],
+                            help='specify generator architecture')
         parser.add_argument('--embedding_type', type=str, default='positional', choices=['fourier', 'positional'], help='specify generator architecture')
         parser.add_argument('--n_layers_D', type=int, default=3, help='only used if netD==n_layers')
         parser.add_argument('--style_dim', type=int, default=512, help='only used if netD==n_layers')
         parser.add_argument('--n_mlp', type=int, default=3, help='only used if netD==n_layers')
+        parser.add_argument('--use_mask', action='store_true',
+                            help='if specified, load paired foreground/background masks and use a dual-branch generator that ' \
+                                 'preserves masked structure while re-synthesising background textures')
+        parser.add_argument('--mask_dual_branch', type=str, default='resnet_9blocks_cond',
+                            choices=['resnet_9blocks', 'resnet_9blocks_cond', 'resnet_6blocks', 'resnet_4blocks',
+                                     'unet_256', 'unet_128', 'stylegan2', 'smallstylegan2', 'resnet_cat', 'ncsnpp'],
+                            help='backbone architecture used inside the mask_dual generator')
         parser.add_argument('--normG', type=str, default='instance', choices=['instance', 'batch', 'none'], help='instance normalization or batch normalization for G')
         parser.add_argument('--normD', type=str, default='instance', choices=['instance', 'batch', 'none'], help='instance normalization or batch normalization for D')
         parser.add_argument('--init_type', type=str, default='xavier', choices=['normal', 'xavier', 'kaiming', 'orthogonal'], help='network initialization')
@@ -118,10 +129,24 @@ class BaseOptions():
 
         # save and return the parser
         self.parser = parser
+        if opt.use_mask and not self._has_argument('--netG'):
+            parser.set_defaults(netG='mask_dual')
+            opt.netG = 'mask_dual'
         if self.cmd_line is None:
             return parser.parse_args()
         else:
             return parser.parse_args(self.cmd_line)
+
+    def _has_argument(self, flag):
+        """Return True if the original command line explicitly provided `flag`."""
+        args = self.cmd_line if self.cmd_line is not None else sys.argv[1:]
+        iterator = iter(args)
+        for token in iterator:
+            if token == flag:
+                return True
+            if token.startswith(flag + '='):
+                return True
+        return False
 
     def print_options(self, opt):
         """Print and save options
