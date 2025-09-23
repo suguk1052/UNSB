@@ -351,8 +351,13 @@ class SBModel(BaseModel):
         
         """Calculate GAN loss for the discriminator"""
         
-        XtXt_1 = torch.cat([self.real_A_noisy,self.fake_B.detach()], dim=1)
-        XtXt_2 = torch.cat([self.real_A_noisy2,self.fake_B2.detach()], dim=1)
+        real_noisy_rgb = self._rgb_only(self.real_A_noisy)
+        real_noisy2_rgb = self._rgb_only(self.real_A_noisy2)
+        fake_rgb = self._rgb_only(self.fake_B.detach())
+        fake2_rgb = self._rgb_only(self.fake_B2.detach())
+
+        XtXt_1 = torch.cat([real_noisy_rgb, fake_rgb], dim=1)
+        XtXt_2 = torch.cat([real_noisy2_rgb, fake2_rgb], dim=1)
         temp = torch.logsumexp(self.netE(XtXt_1, self.time_idx, XtXt_2).reshape(-1), dim=0).mean()
         self.loss_E = -self.netE(XtXt_1, self.time_idx, XtXt_1).mean() +temp + temp**2
         
@@ -372,14 +377,19 @@ class SBModel(BaseModel):
             self.loss_G_GAN = 0.0
         self.loss_SB = 0
         if self.opt.lambda_SB > 0.0:
-            XtXt_1 = torch.cat([self.real_A_noisy, self.fake_B], dim=1)
-            XtXt_2 = torch.cat([self.real_A_noisy2, self.fake_B2], dim=1)
+            real_noisy_rgb = self._rgb_only(self.real_A_noisy)
+            real_noisy2_rgb = self._rgb_only(self.real_A_noisy2)
+            fake_rgb = self._rgb_only(self.fake_B)
+            fake2_rgb = self._rgb_only(self.fake_B2)
+
+            XtXt_1 = torch.cat([real_noisy_rgb, fake_rgb], dim=1)
+            XtXt_2 = torch.cat([real_noisy2_rgb, fake2_rgb], dim=1)
             
             bs = self.opt.batch_size
 
             ET_XY    = self.netE(XtXt_1, self.time_idx, XtXt_1).mean() - torch.logsumexp(self.netE(XtXt_1, self.time_idx, XtXt_2).reshape(-1), dim=0)
             self.loss_SB = -(self.opt.num_timesteps-self.time_idx[0])/self.opt.num_timesteps*self.opt.tau*ET_XY
-            self.loss_SB += self.opt.tau*torch.mean((self.real_A_noisy-self.fake_B)**2)
+            self.loss_SB += self.opt.tau*torch.mean((real_noisy_rgb - fake_rgb) ** 2)
         if self.opt.lambda_NCE > 0.0:
             self.loss_NCE = self.calculate_NCE_loss(self.real_A, fake)
         else:
